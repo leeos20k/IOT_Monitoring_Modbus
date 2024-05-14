@@ -1,0 +1,387 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="Modbus">
+
+    <select id="GetMasterIPInfoVO" parameterType="Integer" resultType="CamelHashMap">
+        with master_ip_info as
+        (select     m010.master_id,                             	-- master ID
+        m010.master_nm,                             -- Master 명
+        m010.master_ip,                             -- Master IP
+        m010.master_port_no,                      	-- Master Port 번호
+        count(concat(s010.slave_id,s020.seq)) cnt,  -- cnt 개수(기본 *1, 전류 *3)
+        (select	collect_cnt
+        from	tb_s050.tb_s050_cd010 cd010
+        where	cd010.cd_tp = 'SLAVE_TP'
+        and		cd010.org_id = m010.org_id
+        and		cd010.category = '000'
+        and		cd010.lang = 'KOR'
+        and		cd010.cd_v = s010.slave_tp)		slave_tp_cnt,
+        m010.coll_interval,
+        m010.SOCKET_MTH,
+        m010.RECONNECT,
+        m010.TIMEOUT
+        from   tb_s050.tb_s050_master010  m010
+        inner join tb_s050.tb_s050_master020  m020
+        on m020.master_id = m010.master_id
+        inner join tb_s050.tb_s050_slave010  s010
+        on m020.slave_id = s010.slave_id
+        inner join tb_s050.tb_s050_slave020  s020
+        on s020.slave_id = s010.slave_id
+        and    s020.use_flag = 'Y'
+        where  m010.app_tp = '02'
+        and    m010.org_id = #{orgId}
+        group by m010.master_id,
+        m010.master_nm,
+        m010.master_ip,
+        m010.master_port_no,
+        s010.slave_tp,
+        m010.coll_interval,
+        m010.SOCKET_MTH,
+        m010.RECONNECT,
+        m010.TIMEOUT)
+        select master_id,                                     -- master ID
+        master_nm,                                     -- Master 명
+        master_ip,                                     -- Master IP
+        master_port_no,                                -- Master Port 번호
+        sum(cnt * slave_tp_cnt) as slave_cnt,          -- Master 별 slave 조회 건수
+        coll_interval,                                 -- Master 별 조회 term
+        socket_mth,
+        reconnect,
+        timeout
+        from   master_ip_info
+        group by master_id,
+        master_nm,
+        master_ip,
+        master_port_no,
+        coll_interval ;
+
+    </select>
+
+    <select id="GetSlaveAlarm" parameterType="java.util.Map" resultType="CamelHashMap">
+        SELECT 	s010.slave_nm,				                                    -- slave명
+        s020.seq,					                                    -- slave 순번
+        s010.slave_tp,				                                    -- slave 구분
+        case when s010.slave_tp = 'A' then s020.alarm_max_value*10
+        else s020.alarm_max_value
+        end as alarm_max_value,                        -- slave 순번별 알람 HH 값
+        case when s010.slave_tp = 'A' then  s020.alarm_min_value *10
+        else s020.alarm_min_value
+        end	as alarm_min_value,                        -- slave 순번별 알람 LL 값
+        case when s010.slave_tp = 'A' then s020.ALARM_MAX_L_VALUE * 10
+        else s020.ALARM_MAX_L_VALUE
+        end	as ALARM_MAX_L_VALUE,											-- slave 순번별 알람 HL 값
+        case when s010.slave_tp = 'A' then s020.ALARM_MIN_H_VALUE * 10
+        else s020.ALARM_MIN_H_VALUE
+        end	as ALARM_MIN_H_VALUE ,											-- slave 순번별 알람 LH 값
+        s020.alarm_tm,				                                    -- slave 순번별 알람 지속시간 값
+        case when s010.slave_tp = 'A' then s020.SLAVE_BASE_VALUE * 10
+        else s020.SLAVE_BASE_VALUE
+        end as SLAVE_BASE_VALUE,		-- slave 순번별 상불평형 기준값
+        s020.PHASE_UNB_RATE,											-- slave 순번별 상불평형
+        s010.slave_id,				                                    -- hidden 으로 사용할 slave_id
+        s020.slave_detail_nm,		                                    -- slave 상세명
+        s020.slave_detail_id,		                                    -- slave detail id
+        m010.MASTER_IP,				                                    -- master IP
+        m010.MASTER_port_no,			                                -- master Port 번호
+        s020.use_flag,
+        s010.read_reg_cnt  slave_cnt
+        FROM 	tb_s050.tb_s050_slave020  s020
+        inner join tb_s050.tb_s050_slave010  s010
+        on s020.slave_id = s010.slave_id
+        inner join tb_s050.tb_s050_master020  m020
+        on	m020.slave_id = s020.slave_id
+        inner join tb_s050.tb_s050_master010  m010
+        on	m020.master_id = m010.master_id
+        and	m010.org_id = s010.org_id
+        and	m010.org_id = #{orgId}
+        where	s010.app_tp = '02'
+        and		m010.MASTER_IP = #{masterIp}			                       --  접속한 master IP
+        and		m010.MASTER_port_no = #{portNo}                               --  접속한 master port
+        order by s020.slave_detail_id;
+    </select>
+
+
+    <select id="GetSlaveUnitIDInfoVO" parameterType="java.util.Map" resultType="CamelHashMap">
+        select  s010.slave_id,                                     			-- slave_id
+        s010.slave_Nm,
+        s010.slave_tp,                                     			-- slave 구분
+        s010.register,
+        s010.start_num,												-- Slave 읽을 시작값
+        s010.read_reg_cnt  slave_cnt,                               -- slave 읽을 총 수
+        substring(s020.slave_detail_id, 1, 1 )    slave_unit_id,    -- UNIT_ID
+        m020.master_id
+        from    tb_s050.tb_s050_slave010  s010
+        inner join tb_s050.tb_s050_slave020  s020
+        on s010.slave_id = s020.slave_id
+        inner join tb_s050.tb_s050_master020  m020
+        on m020.slave_id = s010.slave_id
+        where   s010.org_id = #{orgId}
+        and     m020.master_id = #{masterId}
+        group by s010.slave_id,
+        s010.slave_tp,
+        substring(s020.slave_detail_id, 1, 1 )
+        order by substring(s020.slave_detail_id, 1, 1 )
+    </select>
+
+
+    <select id="GetSlaveSeqInfoVO" parameterType="java.util.Map" resultType="CamelHashMap">
+        with slave_info as (
+        select  s020.slave_id,
+        s020.seq,
+        s020.start_num,
+        s020.use_flag,
+        s020.ALARM_END_TM,
+        s020.alarm_tp,
+        s010.slave_tp
+        from   tb_s050.tb_s050_slave010  s010
+        inner join tb_s050.tb_s050_slave020    s020
+        on   s010.slave_id = s020.slave_id)
+        select  sInfo.slave_id,
+        sInfo.seq,
+        sInfo.start_num,
+        sInfo.slave_tp,
+        sInfo.use_flag,
+        sInfo.alarm_end_tm,
+        sInfo.alarm_tp,
+        c010.collect_cnt
+        from slave_info 	sInfo
+        inner join tb_s050.tb_s050_cd010    c010
+        on sInfo.slave_tp = c010.cd_V
+        where c010.category = '000'
+        and slave_id = #{slaveId};
+    </select>
+
+
+
+
+
+
+    <insert id="InsertPump" parameterType="java.util.Map">
+        INSERT INTO tb_s050.tb_s050_pump010
+        (PUMP_EVENT_TM,
+        SLAVE_ID,
+        SEQ,
+        CREATE_OBJECT_ID,
+        CREATE_TIMESTAMP,
+        CREATE_PROGRAM_ID,
+        LAST_OBJECT_ID,
+        UPDATE_TIMESTAMP,
+        UPDATE_PROGRAM_ID,
+        ORG_ID,
+        R_VALUE,
+        S_VALUE,
+        T_VALUE,
+        L_VALUE)
+        VALUES
+        (#{pumpEventTm},				-- 데이타 읽는 시간
+        #{slaveId},				        -- slave_id
+        #{seq},					        -- slave seq
+        'SYSTEM',
+        sysdate(),
+        'S052030040',
+        'SYSTEM',
+        sysdate(),
+        'S052030040',
+        #{orgId},
+        #{rValue},					    -- 전류기의 R 값
+        #{sValue},					    -- 전류기의 S 값
+        #{tValue},					    -- 전류기의 T 값
+        #{lValue});				        -- Level 경우 입력
+    </insert>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <insert id="InsertAlarm" parameterType="java.util.Map">
+        INSERT INTO tb_s050.tb_s050_slave030
+        (SLAVE_ID,
+        SEQ,
+        ALARM_END_TM,
+        CREATE_OBJECT_ID,
+        CREATE_TIMESTAMP,
+        CREATE_PROGRAM_ID,
+        LAST_OBJECT_ID,
+        UPDATE_TIMESTAMP,
+        UPDATE_PROGRAM_ID,
+        ALARM_START_TM,
+        ALARM_CONFIRM_FLAG,
+        ALARM_TP )
+        VALUES
+        (#{slaveId} ,			-- slave_ID
+        #{seq} ,			    -- slave seq
+        #{alarmEndTm} ,			-- 알람 종료일시
+        'SYSTEM',
+        sysdate(),
+        'S052030040',
+        'SYSTEM',
+        sysdate(),
+        'S052030040',
+        #{alarmStartTm},        -- 알람 시작일시
+        null,
+        #{alarmTp}	 			-- 알람 유형 ( HH : HH / HL : HL / LH : LH / LL :LL / 상불평형 ; PH )
+        );			            -- 알람 Flag
+    </insert>
+
+
+    <update id="updateAlarmOccurrenceVO" parameterType="java.util.Map">
+        update	tb_s050.tb_s050_slave020
+        set		LAST_OBJECT_ID = 'SYSTEM',
+        UPDATE_TIMESTAMP = sysdate(),
+        UPDATE_PROGRAM_ID = 'S052030040',
+        ALARM_TP = #{alarmTp},		-- 고장발생유형
+        ALARM_END_TM = #{alarmEndTm}	-- 고장발생시각
+        where	slave_id = #{slaveId}		-- 알람 발생한 slave_id
+        and		seq = #{seq} ;			-- 알람 발생한 seq
+    </update>
+
+    <update id="updateCommunicationErrorVO" parameterType="java.util.Map">
+        update	tb_s050.tb_s050_slave020
+        set		LAST_OBJECT_ID = 'SYSTEM',
+        UPDATE_TIMESTAMP = sysdate(),
+        UPDATE_PROGRAM_ID = 'S052030040',
+        NETWORK_ALARM_FLAG = 'Y',
+        NETWORK_ALARM_DATE = sysdate()
+        where	slave_id = #{slaveId}		-- 알람 발생한 slave_id
+        and		seq = #{seq} ;			-- 알람 발생한 seq
+    </update>
+
+    <update id="updateEtcErrorVO" parameterType="java.util.Map">
+        update	tb_s050.tb_s050_slave020
+        set		LAST_OBJECT_ID = 'SYSTEM',
+        UPDATE_TIMESTAMP = sysdate(),
+        UPDATE_PROGRAM_ID = 'S052030040',
+        ETC_ALARM_FLAG = 'Y',
+        ETC_ALARM_DATE = sysdate()
+        where	slave_id = #{slaveId}		-- 알람 발생한 slave_id
+        and		seq = #{seq} ;			-- 알람 발생한 seq
+    </update>
+
+
+
+    <select id="GetSlaveBeforeValueVO" parameterType="java.util.Map" resultType="CamelHashMap">
+        select 	p010.PUMP_EVENT_TM,
+        p010.slave_id,
+        p010.seq,
+        p010.r_value,
+        p010.s_value,
+        p010.t_value,
+        p010.l_value
+        from 	tb_s050.tb_s050_pump010	p010
+        where	p010.slave_id = #{slaveId}				-- 알람 발생한 slave_id
+        and		p010.seq = #{seq}					-- 알람 발생한 seq
+        and		p010.PUMP_EVENT_TM <![CDATA[>=]]> date_sub(date_format(#{alarmEndTm}, '%Y-%m-%d %T'), interval 50 minute )		-- 알람발생시각
+        and		p010.PUMP_EVENT_TM <![CDATA[<=]]> date_format(#{alarmEndTm}, '%Y-%m-%d %T')		-- 알람발생시각 ;
+    </select>
+
+
+    <insert id="InsertSlave031VO" parameterType="java.util.Map">
+        INSERT INTO tb_s050.tb_s050_slave031
+        (ALARM_EVENT_TM,
+        SLAVE_ID,
+        SEQ,
+        ALARM_END_TM,
+        CREATE_OBJECT_ID,
+        CREATE_TIMESTAMP,
+        CREATE_PROGRAM_ID,
+        LAST_OBJECT_ID,
+        UPDATE_TIMESTAMP,
+        UPDATE_PROGRAM_ID,
+        ORG_ID,
+        R_VALUE,
+        S_VALUE,
+        T_VALUE,
+        L_VALUE)
+        VALUES
+        (#{pumpEventTm},		-- GetSlaveBeforeValueVO.PUMP_EVENT_TM
+        #{slaveId},			-- GetSlaveBeforeValueVO.slave_id
+        #{seq},			-- GetSlaveBeforeValueVO.seq
+        #{alarmEndTm},			-- 알람발생시각
+        'SYSTEM',
+        sysdate(),
+        'S052030040',
+        'SYSTEM',
+        sysdate(),
+        'S052030040',
+        1,
+        #{rValue},			-- GetSlaveBeforeValueVO.R_VALUE
+        #{sValue},			-- GetSlaveBeforeValueVO.s_value
+        #{tValue},			-- GetSlaveBeforeValueVO.t_value
+        #{lValue});		-- GetSlaveBeforeValueVO.l_value
+    </insert>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <!--    <select id="GetSlaveUnitIDInfoVO" parameterType="java.util.Map" resultType="CamelHashMap">-->
+    <!--        select	s010.slave_id,													&#45;&#45; slave_id-->
+    <!--                s010.slave_tp,													&#45;&#45; slave 구분-->
+    <!--                case when s010.slave_tp = 'V' then count(s020.seq) *3           &#45;&#45; cnt 개수(기본 *1, 전류 *3)-->
+    <!--                else count(s020.seq)-->
+    <!--                end  slave_cnt,													&#45;&#45; slave 수-->
+    <!--                substring(s020.slave_detail_id, 1, 1 )		slave_unit_id,		&#45;&#45; UNIT_ID-->
+    <!--                m020.master_id-->
+    <!--        from	tb_s050.tb_s050_slave010  s010-->
+    <!--                inner join tb_s050.tb_s050_slave020  s020-->
+    <!--                on	s010.slave_id = s020.slave_id-->
+    <!--                inner join tb_s050.tb_s050_master020  m020-->
+    <!--                on m020.slave_id = s010.slave_id-->
+    <!--        where 	s010.org_id = #{orgId}-->
+    <!--        and		m020.master_id = #{masterId}-->
+    <!--        group by s010.slave_id,-->
+    <!--                 s010.slave_tp,-->
+    <!--                 substring(s020.slave_detail_id, 1, 1 )-->
+    <!--                 order by substring(s020.slave_detail_id, 1, 1 ) ;-->
+    <!--    </select>-->
+
+    <update id="updateAlarm" parameterType="java.util.Map">
+        UPDATE	tb_s050.tb_s050_slave020
+        SET		LAST_OBJECT_ID = 'SYSTEM',
+        UPDATE_TIMESTAMP = sysdate(),
+        UPDATE_PROGRAM_ID = 'S052030040',
+        ALARM_CONFIRM_FLAG = 'Y'
+        WHERE 	SLAVE_ID = #{slaveId}
+        AND 	SEQ = #{seq};
+    </update>
+
+    <select id="saveData" parameterType="java.util.Map" resultType="CamelHashMap">
+        SELECT PUMP_EVENT_TM,
+        SLAVE_ID,
+        SEQ,
+        CREATE_TIMESTAMP,
+        UPDATE_TIMESTAMP,
+        ORG_ID,
+        R_VALUE,
+        S_VALUE,
+        T_VALUE,
+        L_VALUE
+        FROM tb_s050.tb_s050_pump010
+        WHERE PUMP_EVENT_TM <![CDATA[>=]]> date_sub(#{sdTime}, INTERVAL 1 HOUR) -- 조회 기준은 수정 요망
+        AND PUMP_EVENT_TM <![CDATA[<]]> #{sdTime};
+    </select>
+
+</mapper>
